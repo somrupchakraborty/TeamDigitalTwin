@@ -1,9 +1,6 @@
 import { useState } from 'react';
 import { Search, Clock, FileText } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import type { Database } from '../lib/database.types';
-
-type Document = Database['public']['Tables']['documents']['Row'];
+import { semanticSearch, type DocumentSummary } from '../lib/api';
 
 interface SearchInterfaceProps {
   onViewRecent: () => void;
@@ -11,9 +8,10 @@ interface SearchInterfaceProps {
 
 export function SearchInterface({ onViewRecent }: SearchInterfaceProps) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Document[]>([]);
+  const [results, setResults] = useState<DocumentSummary[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
+  const [recencyDays, setRecencyDays] = useState<number | null>(7);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,23 +21,8 @@ export function SearchInterface({ onViewRecent }: SearchInterfaceProps) {
     setError('');
 
     try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/semantic-search`;
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: query.trim(), limit: 20 }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Search request failed');
-      }
-
-      const data = await response.json();
-      setResults(data.results || []);
+      const data = await semanticSearch(query.trim(), recencyDays);
+      setResults(data.documents || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');
     } finally {
@@ -80,13 +63,30 @@ export function SearchInterface({ onViewRecent }: SearchInterfaceProps) {
             />
           </div>
         </form>
-        <button
-          onClick={onViewRecent}
-          className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center gap-2 transition-colors"
-        >
-          <Clock className="w-5 h-5" />
-          Recent
-        </button>
+        <div className="flex gap-2">
+          {[7, 14, 30, null].map((days) => (
+            <button
+              key={`recency-${days ?? 'all'}`}
+              type="button"
+              onClick={() => setRecencyDays(days)}
+              className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                recencyDays === days
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              }`}
+            >
+              {days ? `Last ${days}d` : 'All'}
+            </button>
+          ))}
+          <button
+            onClick={onViewRecent}
+            type="button"
+            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center gap-2 transition-colors"
+          >
+            <Clock className="w-5 h-5" />
+            Recent
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -123,29 +123,22 @@ export function SearchInterface({ onViewRecent }: SearchInterfaceProps) {
                         {doc.summary}
                       </p>
                     )}
+                    {doc.highlights && doc.highlights.length > 0 && (
+                      <p className="text-sm text-gray-500 bg-gray-50 rounded p-3">
+                        {doc.highlights[0]}
+                      </p>
+                    )}
                     <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
                       <span className="flex items-center gap-1">
                         <span className="font-medium">{doc.uploader_name}</span>
                       </span>
                       <span>•</span>
-                      <span>{formatDate(doc.upload_date)}</span>
+                      <span>{formatDate(doc.uploaded_at)}</span>
                       <span>•</span>
                       <span>{formatFileSize(doc.file_size)}</span>
                       <span>•</span>
                       <span className="uppercase">{doc.file_type}</span>
                     </div>
-                    {doc.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {doc.tags.map((tag, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded"
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>

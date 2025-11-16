@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Send, Sparkles, FileText, User, Bot } from 'lucide-react';
-import type { Database } from '../lib/database.types';
-
-type Document = Database['public']['Tables']['documents']['Row'];
+import type { DocumentSummary } from '../lib/api';
+import { runAgentQuery } from '../lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
-  documents?: Document[];
+  documents?: DocumentSummary[];
+  steps?: string[];
 }
 
 export function AgentChat() {
@@ -19,6 +19,7 @@ export function AgentChat() {
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [recencyDays, setRecencyDays] = useState<number | null>(7);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,31 +35,18 @@ export function AgentChat() {
     setLoading(true);
 
     try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/agent-query`;
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: input.trim() }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Query failed');
-      }
-
-      const data = await response.json();
+      const data = await runAgentQuery(input.trim(), recencyDays);
 
       const assistantMessage: Message = {
         role: 'assistant',
         content: data.response,
         documents: data.documents || [],
+        steps: data.steps,
       };
 
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
+      console.error('Agent query failed', error);
       const errorMessage: Message = {
         role: 'assistant',
         content: 'Sorry, I encountered an error processing your request. Please try again.',
@@ -76,11 +64,30 @@ export function AgentChat() {
 
   return (
     <div className="w-full max-w-4xl mx-auto h-[calc(100vh-12rem)] flex flex-col">
-      <div className="mb-4 p-4 bg-white border rounded-lg flex items-center gap-3">
-        <Sparkles className="w-6 h-6 text-blue-600" />
-        <div>
-          <h2 className="font-semibold text-gray-900">Intelligent Document Assistant</h2>
-          <p className="text-sm text-gray-500">Ask questions in natural language</p>
+      <div className="mb-4 p-4 bg-white border rounded-lg flex flex-wrap items-center gap-4 justify-between">
+        <div className="flex items-center gap-3">
+          <Sparkles className="w-6 h-6 text-blue-600" />
+          <div>
+            <h2 className="font-semibold text-gray-900">Intelligent Document Assistant</h2>
+            <p className="text-sm text-gray-500">Local agentic RAG with semantic retrieval</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-gray-500">Recency</span>
+          {[7, 14, 30, null].map(days => (
+            <button
+              key={`agent-recency-${days ?? 'all'}`}
+              type="button"
+              onClick={() => setRecencyDays(days)}
+              className={`px-3 py-1 rounded-full border text-xs ${
+                recencyDays === days
+                  ? 'bg-blue-600 border-blue-600 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {days ? `Last ${days}d` : 'All time'}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -103,19 +110,24 @@ export function AgentChat() {
               }`}
             >
               <div className="whitespace-pre-wrap">{message.content}</div>
+              {message.steps && message.steps.length > 0 && (
+                <div className="mt-3 text-xs text-gray-500 space-y-1">
+                  {message.steps.map((step, index) => (
+                    <div key={`${step}-${index}`} className="flex gap-2">
+                      <span>{index + 1}.</span>
+                      <span>{step}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {message.documents && message.documents.length > 0 && (
                 <div className="mt-4 space-y-2">
                   {message.documents.slice(0, 3).map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="p-3 bg-white rounded border border-gray-200"
-                    >
+                    <div key={doc.id} className="p-3 bg-white rounded border border-gray-200">
                       <div className="flex items-start gap-2">
                         <FileText className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">
-                            {doc.filename}
-                          </p>
+                          <p className="text-sm font-medium text-gray-900 truncate">{doc.filename}</p>
                           <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
                             <span className="flex items-center gap-1">
                               <User className="w-3 h-3" />
@@ -126,6 +138,11 @@ export function AgentChat() {
                             <span>•</span>
                             <span>{formatFileSize(doc.file_size)}</span>
                           </div>
+                          {doc.highlights && doc.highlights.length > 0 && (
+                            <p className="text-xs text-gray-500 mt-2 bg-gray-50 rounded p-2">
+                              {doc.highlights[0]}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
