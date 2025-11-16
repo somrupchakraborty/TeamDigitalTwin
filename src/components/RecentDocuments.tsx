@@ -1,48 +1,34 @@
-import { useState, useEffect } from 'react';
-import { FileText, ArrowLeft, User, Calendar, RefreshCw } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import type { Database } from '../lib/database.types';
-
-type Document = Database['public']['Tables']['documents']['Row'];
+import { useState, useEffect, useCallback } from 'react';
+import { FileText, ArrowLeft, User, Calendar } from 'lucide-react';
+import { fetchRecentDocuments, type DocumentSummary } from '../lib/api';
 
 interface RecentDocumentsProps {
   onBack: () => void;
 }
 
 export function RecentDocuments({ onBack }: RecentDocumentsProps) {
-  const [documents, setDocuments] = useState<Document[]>([]);
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [daysFilter, setDaysFilter] = useState(10);
-  const [processing, setProcessing] = useState<Record<string, boolean>>({});
+  const [daysFilter, setDaysFilter] = useState(7);
 
-  useEffect(() => {
-    loadRecentDocuments();
-  }, [daysFilter]);
-
-  const loadRecentDocuments = async () => {
+  const loadRecentDocuments = useCallback(async () => {
     setLoading(true);
     setError('');
 
     try {
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - daysFilter);
-
-      const { data, error: fetchError } = await supabase
-        .from('documents')
-        .select('*')
-        .gte('upload_date', cutoffDate.toISOString())
-        .order('upload_date', { ascending: false });
-
-      if (fetchError) throw fetchError;
-
-      setDocuments(data || []);
+      const { documents } = await fetchRecentDocuments(daysFilter);
+      setDocuments(documents || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load documents');
     } finally {
       setLoading(false);
     }
-  };
+  }, [daysFilter]);
+
+  useEffect(() => {
+    loadRecentDocuments();
+  }, [loadRecentDocuments]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -59,37 +45,11 @@ export function RecentDocuments({ onBack }: RecentDocumentsProps) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  const processDocument = async (documentId: string) => {
-    setProcessing(prev => ({ ...prev, [documentId]: true }));
-    try {
-      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-document`;
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ documentId }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to process document');
-      }
-
-      await loadRecentDocuments();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Processing failed');
-    } finally {
-      setProcessing(prev => ({ ...prev, [documentId]: false }));
-    }
-  };
-
-  const groupByDate = (docs: Document[]) => {
-    const groups: Record<string, Document[]> = {};
+  const groupByDate = (docs: DocumentSummary[]) => {
+    const groups: Record<string, DocumentSummary[]> = {};
 
     docs.forEach(doc => {
-      const date = new Date(doc.upload_date);
+      const date = new Date(doc.uploaded_at);
       const today = new Date();
       const yesterday = new Date(today);
       yesterday.setDate(yesterday.getDate() - 1);
@@ -123,7 +83,7 @@ export function RecentDocuments({ onBack }: RecentDocumentsProps) {
           Back to Search
         </button>
         <div className="flex gap-2">
-          {[7, 10, 14, 30].map(days => (
+          {[7, 14, 30].map(days => (
             <button
               key={days}
               onClick={() => setDaysFilter(days)}
@@ -146,9 +106,7 @@ export function RecentDocuments({ onBack }: RecentDocumentsProps) {
       )}
 
       {loading ? (
-        <div className="text-center py-12 text-gray-500">
-          Loading recent documents...
-        </div>
+        <div className="text-center py-12 text-gray-500">Loading recent documents...</div>
       ) : documents.length === 0 ? (
         <div className="text-center py-12">
           <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
@@ -157,9 +115,7 @@ export function RecentDocuments({ onBack }: RecentDocumentsProps) {
       ) : (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">
-              Recent Updates
-            </h2>
+            <h2 className="text-lg font-semibold text-gray-900">Recent Updates</h2>
             <p className="text-sm text-gray-500">
               {documents.length} document{documents.length !== 1 ? 's' : ''} found
             </p>
@@ -171,7 +127,7 @@ export function RecentDocuments({ onBack }: RecentDocumentsProps) {
                 <Calendar className="w-4 h-4" />
                 {dateGroup}
               </h3>
-              {docs.map((doc) => (
+              {docs.map(doc => (
                 <div
                   key={doc.id}
                   className="p-5 bg-white border rounded-lg hover:shadow-md transition-shadow"
@@ -180,67 +136,29 @@ export function RecentDocuments({ onBack }: RecentDocumentsProps) {
                     <FileText className="w-5 h-5 text-blue-600 mt-1 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-3 mb-2">
-                        <h3 className="font-medium text-gray-900 flex-1">
-                          {doc.filename}
-                        </h3>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span
-                            className={`px-2 py-1 text-xs rounded ${
-                              doc.processing_status === 'completed'
-                                ? 'bg-green-50 text-green-700'
-                                : doc.processing_status === 'processing'
-                                ? 'bg-blue-50 text-blue-700'
-                                : doc.processing_status === 'failed'
-                                ? 'bg-red-50 text-red-700'
-                                : 'bg-gray-50 text-gray-700'
-                            }`}
-                          >
-                            {doc.processing_status}
-                          </span>
-                          {(doc.processing_status === 'pending' || doc.processing_status === 'failed') && (
-                            <button
-                              onClick={() => processDocument(doc.id)}
-                              disabled={processing[doc.id]}
-                              className="p-1.5 hover:bg-blue-50 rounded transition-colors disabled:opacity-50"
-                              title="Process document"
-                            >
-                              <RefreshCw className={`w-4 h-4 text-blue-600 ${processing[doc.id] ? 'animate-spin' : ''}`} />
-                            </button>
-                          )}
-                        </div>
+                        <h3 className="font-medium text-gray-900 flex-1">{doc.filename}</h3>
+                        <span className="px-2 py-1 text-xs rounded bg-blue-50 text-blue-700">Local</span>
                       </div>
-
-                      {doc.summary && (
-                        <p className="text-sm text-gray-600 mb-3 line-clamp-2">
-                          {doc.summary}
+                      <p className="text-sm text-gray-600 mb-3">
+                        {doc.summary || 'No summary available yet.'}
+                      </p>
+                      {doc.highlights && doc.highlights.length > 0 && (
+                        <p className="text-sm text-gray-500 bg-gray-50 rounded p-3 mb-3">
+                          {doc.highlights[0]}
                         </p>
                       )}
-
                       <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
                         <span className="flex items-center gap-1">
                           <User className="w-3 h-3" />
                           {doc.uploader_name}
                         </span>
                         <span>•</span>
-                        <span>{formatDate(doc.upload_date)}</span>
+                        <span>{formatDate(doc.uploaded_at)}</span>
                         <span>•</span>
                         <span>{formatFileSize(doc.file_size)}</span>
                         <span>•</span>
                         <span className="uppercase">{doc.file_type}</span>
                       </div>
-
-                      {doc.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-3">
-                          {doc.tags.map((tag, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded"
-                            >
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>

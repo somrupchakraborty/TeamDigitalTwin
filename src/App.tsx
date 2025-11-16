@@ -4,14 +4,11 @@ import { UploadArea } from './components/UploadArea';
 import { SearchInterface } from './components/SearchInterface';
 import { RecentDocuments } from './components/RecentDocuments';
 import { AgentChat } from './components/AgentChat';
-import { useDocumentProcessor } from './hooks/useDocumentProcessor';
 
 type View = 'upload' | 'search' | 'recent' | 'chat';
 
 function App() {
   const [view, setView] = useState<View>('chat');
-  useDocumentProcessor();
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">

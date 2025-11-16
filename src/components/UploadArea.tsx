@@ -1,7 +1,6 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Upload, X, FileText, File, FileSpreadsheet } from 'lucide-react';
-import { supabase } from '../lib/supabase';
-import { ensureStorageBucket } from '../lib/storage';
+import { uploadDocuments, type UploadPayload } from '../lib/api';
 
 interface UploadAreaProps {
   onUploadComplete?: () => void;
@@ -27,10 +26,6 @@ export function UploadArea({ onUploadComplete }: UploadAreaProps) {
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    ensureStorageBucket();
-  }, []);
 
   const validateFile = (file: File): string | null => {
     if (!SUPPORTED_TYPES.includes(file.type)) {
@@ -93,6 +88,17 @@ export function UploadArea({ onUploadComplete }: UploadAreaProps) {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  };
+
   const handleUpload = async () => {
     if (selectedFiles.length === 0 || !uploaderName.trim()) {
       setError('Please select files and enter your name');
@@ -103,40 +109,26 @@ export function UploadArea({ onUploadComplete }: UploadAreaProps) {
     setError('');
 
     try {
-      await ensureStorageBucket();
+      const payloads: UploadPayload[] = [];
 
       for (const file of selectedFiles) {
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-        const filePath = `${fileName}`;
-
-        setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
-
-        const { error: uploadError } = await supabase.storage
-          .from('documents')
-          .upload(filePath, file, {
-            upsert: false,
-          });
-
-        if (uploadError) {
-          throw uploadError;
-        }
-
-        setUploadProgress(prev => ({ ...prev, [file.name]: 50 }));
-
-        const { error: dbError } = await supabase.from('documents').insert({
-          filename: file.name,
-          file_type: fileExt || 'unknown',
-          file_size: file.size,
-          storage_path: filePath,
-          uploader_name: uploaderName.trim(),
-          processing_status: 'pending',
+        setUploadProgress(prev => ({ ...prev, [file.name]: 10 }));
+        const buffer = await file.arrayBuffer();
+        const base64 = arrayBufferToBase64(buffer);
+        payloads.push({
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          content: base64,
         });
-
-        if (dbError) throw dbError;
-
-        setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
+        setUploadProgress(prev => ({ ...prev, [file.name]: 60 }));
       }
+
+      await uploadDocuments(uploaderName.trim(), payloads);
+
+      payloads.forEach(({ name }) => {
+        setUploadProgress(prev => ({ ...prev, [name]: 100 }));
+      });
 
       setSelectedFiles([]);
       setUploaderName('');
